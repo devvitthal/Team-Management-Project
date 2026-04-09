@@ -81,7 +81,7 @@ def get_http_client() -> httpx.AsyncClient:
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -104,6 +104,18 @@ async def log_latency(request: Request, call_next):
     return response
 
 
+
+
+@app.exception_handler(Exception)
+async def handle_unhandled_exception(request: Request, exc: Exception) -> JSONResponse:
+    """Catch-all handler so unhandled exceptions are converted to a Response
+    before propagating through the middleware stack. Without this, the exception
+    bypasses CORSMiddleware and the browser sees a CORS error instead of a 500."""
+    logger.error("Unhandled exception on %s %s: %s", request.method, request.url.path, exc, exc_info=True)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error"},
+    )
 
 
 @app.exception_handler(httpx.ConnectError)
