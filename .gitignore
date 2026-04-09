@@ -205,6 +205,11 @@ yarn-error.log*
 logs
 *.log
 
+# test folder
+test/
+tests/ 
+test-reports/
+
 # Coverage data
 coverage
 

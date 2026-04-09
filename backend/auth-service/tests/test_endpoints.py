@@ -8,6 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
 # Make the service package importable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -18,9 +19,12 @@ os.environ.setdefault("JWT_SECRET_KEY", "test-secret-key-for-pytest")
 from database import Base, get_db
 from function import app
 
+# StaticPool forces all sessions to share the same connection so that
+# tables created by Base.metadata.create_all are visible to every session.
 TEST_ENGINE = create_engine(
     "sqlite:///:memory:",
     connect_args={"check_same_thread": False},
+    poolclass=StaticPool,
 )
 TestingSession = sessionmaker(autocommit=False, autoflush=False, bind=TEST_ENGINE)
 
