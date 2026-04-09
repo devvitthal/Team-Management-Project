@@ -1,0 +1,5 @@
+# Testing dependencies for all backend services
+pytest==8.3.4
+pytest-cov==6.0.0
+httpx==0.28.1
+# SQLite driver is included in the Python stdlib; no extra install needed
