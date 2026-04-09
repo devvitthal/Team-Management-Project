@@ -2,17 +2,25 @@
 API Gateway — single entry point that proxies requests to internal microservices.
 
 Routes:
-  /api/v1/auth/{path}          -> http://auth-service:8001/{path}
-  /api/v1/employees/{path}     -> http://employee-service:8002/{path}
-  /api/v1/organizations/{path} -> http://organization-service:8003/{path}
-  /api/v1/achievements/{path}  -> http://achievement-service:8004/{path}
-  /api/v1/validations/{path}   -> http://validation-service:8005/{path}
+  /api/v1/auth/{path}          -> AUTH_SERVICE_URL/{path}
+  /api/v1/employees/{path}     -> EMPLOYEE_SERVICE_URL/{path}
+  /api/v1/organizations/{path} -> ORGANIZATION_SERVICE_URL/{path}
+  /api/v1/achievements/{path}  -> ACHIEVEMENT_SERVICE_URL/{path}
+  /api/v1/validations/{path}   -> VALIDATION_SERVICE_URL/{path}
 """
 
 import logging
 import os
 import time
+from pathlib import Path
 from typing import Annotated
+
+# Load .env from the backend root when running locally
+try:
+    from dotenv import load_dotenv
+    load_dotenv(dotenv_path=Path(__file__).resolve().parent.parent / ".env", override=True)
+except ImportError:
+    pass
 
 import httpx
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
@@ -26,11 +34,11 @@ SECRET_KEY = os.getenv("JWT_SECRET_KEY", "changeme-in-production")
 ALGORITHM = "HS256"
 
 SERVICE_MAP: dict[str, str] = {
-    "auth": "http://auth-service:8001",
-    "employees": "http://employee-service:8002",
-    "organizations": "http://organization-service:8003",
-    "achievements": "http://achievement-service:8004",
-    "validations": "http://validation-service:8005",
+    "auth":          os.getenv("AUTH_SERVICE_URL",         "http://localhost:8001"),
+    "employees":     os.getenv("EMPLOYEE_SERVICE_URL",     "http://localhost:8002"),
+    "organizations": os.getenv("ORGANIZATION_SERVICE_URL", "http://localhost:8003"),
+    "achievements":  os.getenv("ACHIEVEMENT_SERVICE_URL",  "http://localhost:8004"),
+    "validations":   os.getenv("VALIDATION_SERVICE_URL",   "http://localhost:8005"),
 }
 
 # Routes that do NOT require a valid JWT (e.g. login, register)
@@ -145,9 +153,7 @@ async def _proxy(
     client: httpx.AsyncClient,
     extra_headers: dict[str, str] | None = None,
 ) -> Response:
-    """
-    is forwarded upstream. hop-by-hop headers are stripped.
-    """
+    """Forward request to target_url; hop-by-hop headers are stripped."""
     hop_by_hop = {"host", "connection", "transfer-encoding", "te", "trailer", "upgrade"}
     forwarded_headers = {
         k: v for k, v in request.headers.items() if k.lower() not in hop_by_hop

@@ -95,15 +95,20 @@ fi
 echo ""
 
 # ============================================================
-# SET SHARED ENVIRONMENT VARIABLES
+# LOAD ENVIRONMENT VARIABLES FROM backend/.env
 # ============================================================
-export POSTGRES_HOST="${POSTGRES_HOST:-localhost}"
-export POSTGRES_PORT="${POSTGRES_PORT:-5432}"
-export POSTGRES_USER="${POSTGRES_USER:-postgres}"
-export POSTGRES_PASS="${POSTGRES_PASS:-PgMarvel@241}"
-export POSTGRES_NAME="${POSTGRES_NAME:-workshop_db}"
-export JWT_SECRET_KEY="${JWT_SECRET_KEY:-dev-secret-key-change-in-production}"
-export IS_LOCAL="true"
+BACKEND_ENV="$PROJECT_ROOT/backend/.env"
+if [ ! -f "$BACKEND_ENV" ]; then
+    echo "  ERROR: backend/.env not found."
+    echo "  Copy backend/.env.sample to backend/.env and fill in values."
+    exit 1
+fi
+# shellcheck source=/dev/null
+set -a
+source "$BACKEND_ENV"
+set +a
+echo "  OK   Loaded environment from backend/.env"
+echo ""
 
 # ============================================================
 # START BACKEND SERVICES (parallel)
@@ -128,8 +133,14 @@ start_service() {
     cd "$dir"
     $PIP_CMD install -q -r requirements.txt
 
+    # api-gateway uses main:app; all other services use function:app
+    local app_module="function:app"
+    if [ "$name" = "api-gateway" ]; then
+        app_module="main:app"
+    fi
+
     echo "  OK   Starting $name on port $port"
-    uvicorn function:app \
+    uvicorn $app_module \
         --host 0.0.0.0 \
         --port "$port" \
         --reload \
@@ -139,22 +150,19 @@ start_service() {
     cd "$PROJECT_ROOT"
 }
 
-start_service "auth-service"         8001
-start_service "employee-service"     8002
-start_service "organization-service" 8003
-start_service "achievement-service"  8004
-start_service "validation-service"   8005
+start_service "auth-service"         "${AUTH_PORT}"
+start_service "employee-service"     "${EMPLOYEE_PORT}"
+start_service "organization-service" "${ORGANIZATION_PORT}"
+start_service "achievement-service"  "${ACHIEVEMENT_PORT}"
+start_service "validation-service"   "${VALIDATION_PORT}"
+start_service "api-gateway"          "${API_GATEWAY_PORT}"
 
 # ============================================================
 # WRITE FRONTEND .env.local (direct service URLs)
 # ============================================================
 ENV_FILE="$FRONTEND_DIR/.env.local"
 cat > "$ENV_FILE" <<EOF
-VITE_AUTH_SERVICE_URL=http://localhost:8001
-VITE_EMPLOYEE_SERVICE_URL=http://localhost:8002
-VITE_ORGANIZATION_SERVICE_URL=http://localhost:8003
-VITE_ACHIEVEMENT_SERVICE_URL=http://localhost:8004
-VITE_VALIDATION_SERVICE_URL=http://localhost:8005
+VITE_API_GATEWAY_URL=http://localhost:${API_GATEWAY_PORT}
 EOF
 echo ""
 echo "  OK   Written $ENV_FILE"
@@ -187,11 +195,12 @@ echo "============================================"
 echo "  All services are starting up!"
 echo "============================================"
 echo ""
-echo "  Auth Service         :  http://localhost:8001/docs"
-echo "  Employee Service     :  http://localhost:8002/docs"
-echo "  Organization Service :  http://localhost:8003/docs"
-echo "  Achievement Service  :  http://localhost:8004/docs"
-echo "  Validation Service   :  http://localhost:8005/docs"
+echo "  Auth Service         :  http://localhost:${AUTH_PORT}/docs"
+echo "  Employee Service     :  http://localhost:${EMPLOYEE_PORT}/docs"
+echo "  Organization Service :  http://localhost:${ORGANIZATION_PORT}/docs"
+echo "  Achievement Service  :  http://localhost:${ACHIEVEMENT_PORT}/docs"
+echo "  Validation Service   :  http://localhost:${VALIDATION_PORT}/docs"
+echo "  API Gateway          :  http://localhost:${API_GATEWAY_PORT}/docs"
 echo "  Frontend             :  http://localhost:3000"
 echo ""
 echo "  Logs in: $LOG_DIR/"

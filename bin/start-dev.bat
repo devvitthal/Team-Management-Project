@@ -1,4 +1,5 @@
 @echo off
+setlocal enabledelayedexpansion
 :: Script: Local Development Environment Startup (Windows)
 :: Purpose: Start all backend microservices and frontend dev server
 :: Usage: bin\start-dev.bat
@@ -18,16 +19,20 @@ set "BACKEND_DIR=%PROJECT_ROOT%\backend"
 set "FRONTEND_DIR=%PROJECT_ROOT%\frontend"
 
 :: ============================================================
-:: SHARED ENVIRONMENT VARIABLES
+:: LOAD ENVIRONMENT VARIABLES FROM backend\.env
 :: ============================================================
-set "POSTGRES_HOST=localhost"
-set "POSTGRES_PORT=5432"
-set "POSTGRES_USER=postgres"
-set "POSTGRES_PASS=PgMarvel@241"
-set "POSTGRES_NAME=workshop_db"
-set "JWT_SECRET_KEY=dev-secret-key-change-in-production"
-set "ACCESS_TOKEN_EXPIRE_MINUTES=480"
-set "IS_LOCAL=true"
+set "BACKEND_ENV=%BACKEND_DIR%\.env"
+if not exist "%BACKEND_ENV%" (
+    echo   ERROR: backend\.env not found.
+    echo   Copy backend\.env.sample to backend\.env and fill in values.
+    pause ^& exit /b 1
+)
+for /f "usebackq tokens=1,* delims==" %%A in ("%BACKEND_ENV%") do (
+    set "line=%%A"
+    if not "!line:~0,1!"=="#" if not "%%A"=="" set "%%A=%%B"
+)
+echo   OK   Loaded environment from backend\.env
+echo.
 
 :: ============================================================
 :: CHECK PREREQUISITES
@@ -58,22 +63,19 @@ echo.
 echo [2/3] Starting backend microservices...
 echo.
 
-call :start_service "auth-service"         8001
-call :start_service "employee-service"     8002
-call :start_service "organization-service" 8003
-call :start_service "achievement-service"  8004
-call :start_service "validation-service"   8005
+call :start_service "auth-service"         %AUTH_PORT%
+call :start_service "employee-service"     %EMPLOYEE_PORT%
+call :start_service "organization-service" %ORGANIZATION_PORT%
+call :start_service "achievement-service"  %ACHIEVEMENT_PORT%
+call :start_service "validation-service"   %VALIDATION_PORT%
+call :start_service "api-gateway"          %API_GATEWAY_PORT%
 
 :: ============================================================
 :: WRITE FRONTEND .env.local
 :: ============================================================
 set "ENV_FILE=%FRONTEND_DIR%\.env.local"
 (
-    echo VITE_AUTH_SERVICE_URL=http://localhost:8001
-    echo VITE_EMPLOYEE_SERVICE_URL=http://localhost:8002
-    echo VITE_ORGANIZATION_SERVICE_URL=http://localhost:8003
-    echo VITE_ACHIEVEMENT_SERVICE_URL=http://localhost:8004
-    echo VITE_VALIDATION_SERVICE_URL=http://localhost:8005
+    echo VITE_API_GATEWAY_URL=http://localhost:%API_GATEWAY_PORT%
 ) > "%ENV_FILE%"
 echo   OK   Written %ENV_FILE%
 echo.
@@ -104,11 +106,12 @@ echo ============================================
 echo   All services are starting up!
 echo ============================================
 echo.
-echo   Auth Service         :  http://localhost:8001/docs
-echo   Employee Service     :  http://localhost:8002/docs
-echo   Organization Service :  http://localhost:8003/docs
-echo   Achievement Service  :  http://localhost:8004/docs
-echo   Validation Service   :  http://localhost:8005/docs
+echo   Auth Service         :  http://localhost:%AUTH_PORT%/docs
+echo   Employee Service     :  http://localhost:%EMPLOYEE_PORT%/docs
+echo   Organization Service :  http://localhost:%ORGANIZATION_PORT%/docs
+echo   Achievement Service  :  http://localhost:%ACHIEVEMENT_PORT%/docs
+echo   Validation Service   :  http://localhost:%VALIDATION_PORT%/docs
+echo   API Gateway          :  http://localhost:%API_GATEWAY_PORT%/docs
 echo   Frontend             :  http://localhost:3000
 echo.
 echo   Each service runs in its own window.
@@ -131,7 +134,9 @@ if not exist "%SVC_DIR%" (
 )
 
 echo   OK   Starting %SVC_NAME% on port %SVC_PORT%
-set "SVC_CMD=cd /d "%SVC_DIR%" && set POSTGRES_HOST=%POSTGRES_HOST%&& set POSTGRES_PORT=%POSTGRES_PORT%&& set POSTGRES_USER=%POSTGRES_USER%&& set POSTGRES_PASS=%POSTGRES_PASS%&& set POSTGRES_NAME=%POSTGRES_NAME%&& set JWT_SECRET_KEY=%JWT_SECRET_KEY%&& set IS_LOCAL=%IS_LOCAL%&& pip install -q -r requirements.txt && uvicorn function:app --host 0.0.0.0 --port %SVC_PORT% --reload"
-start "%SVC_NAME% - http://localhost:%SVC_PORT%/docs" cmd /k "%SVC_CMD%"
+:: api-gateway uses main:app; all other services use function:app
+set "APP_MODULE=function:app"
+if "%SVC_NAME%"=="api-gateway" set "APP_MODULE=main:app"
+start "%SVC_NAME% - http://localhost:%SVC_PORT%/docs" cmd /k "cd /d "%SVC_DIR%" && pip install -q -r requirements.txt && uvicorn %APP_MODULE% --host 0.0.0.0 --port %SVC_PORT% --reload"
 
 exit /b 0
