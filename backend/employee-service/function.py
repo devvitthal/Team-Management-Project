@@ -160,4 +160,4 @@ def _to_response(employee: Employee) -> EmployeeResponse:
     )
 
 
-handler = Mangum(app, lifespan="off")
+handler = Mangum(app, lifespan="off", api_gateway_base_path=os.getenv("ROOT_PATH", ""))

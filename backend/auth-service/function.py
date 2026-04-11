@@ -189,4 +189,4 @@ def update_user_role(
 
 
 # Mangum adapter for AWS Lambda
-handler = Mangum(app, lifespan="off")
+handler = Mangum(app, lifespan="off", api_gateway_base_path=os.getenv("ROOT_PATH", ""))

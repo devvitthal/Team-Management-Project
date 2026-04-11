@@ -50,6 +50,8 @@ locals {
       path             = abspath(format("%s/../backend/%s", path.module, name))
       patterns         = ["node_modules/.+"]
       npm_requirements = true
+      # ROOT_PATH is the CloudFront path prefix for this service (/api/{service-name})
+      root_path        = "/api/${name}"
     }
   }
   python_names = {
@@ -61,6 +63,8 @@ locals {
       path             = abspath(format("%s/../backend/%s", path.module, name))
       patterns         = ["!__pycache__/.*", "!\\..*"]
       pip_requirements = true
+      # ROOT_PATH is the CloudFront path prefix for this service (/api/{service-name})
+      root_path        = "/api/${name}"
     }
   }
   function_names = merge(local.java_names, local.nodejs_names, local.python_names)

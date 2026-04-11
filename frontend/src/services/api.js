@@ -1,11 +1,13 @@
-/** Axios instances for each backend microservice, routed through the API gateway. */
+/** Axios instances for each backend microservice, routed through CloudFront (AWS) or the local proxy. */
 import axios from "axios";
 
 const getToken = () => localStorage.getItem("access_token");
 
-// All traffic goes through the single API gateway.
-// Each client gets a base URL of {gateway}/api/v1/{service}.
-const GATEWAY = import.meta.env.VITE_API_GATEWAY_URL || "";
+// On AWS: VITE_API_URL is the CloudFront base URL (set by deploy-frontend.sh / generate-env.sh).
+// Locally: VITE_API_URL is http://localhost:3001 (the CORS proxy).
+// Each client base URL is {gateway}/api/{service-directory-name}, matching the CloudFront
+// path pattern /api/{service-name}* and the local proxy's /api/{service-name} routing.
+const GATEWAY = import.meta.env.VITE_API_URL || "";
 
 const createServiceClient = (baseURL) => {
  const client = axios.create({ baseURL: baseURL || "" });
@@ -33,16 +35,16 @@ const createServiceClient = (baseURL) => {
  return client;
 };
 
-export const authClient = createServiceClient(`${GATEWAY}/api/v1/auth`);
+export const authClient = createServiceClient(`${GATEWAY}/api/auth-service`);
 export const employeeClient = createServiceClient(
- `${GATEWAY}/api/v1/employees`,
+ `${GATEWAY}/api/employee-service`,
 );
 export const organizationClient = createServiceClient(
- `${GATEWAY}/api/v1/organizations`,
+ `${GATEWAY}/api/organization-service`,
 );
 export const achievementClient = createServiceClient(
- `${GATEWAY}/api/v1/achievements`,
+ `${GATEWAY}/api/achievement-service`,
 );
 export const validationClient = createServiceClient(
- `${GATEWAY}/api/v1/validations`,
+ `${GATEWAY}/api/validation-service`,
 );

@@ -57,10 +57,14 @@ module "lambda" {
     max_age           = 0
   }
 
-  environment_variables = {
-    for key, value in local.env_vars :
-    key => trimspace(value) if try(trimspace(value), "") != ""
-  }
+  environment_variables = merge(
+    {
+      for key, value in local.env_vars :
+      key => trimspace(value) if try(trimspace(value), "") != ""
+    },
+    # Inject ROOT_PATH per service so Mangum can strip the CloudFront /api/{service-name} prefix
+    try(each.value.root_path, "") != "" ? { ROOT_PATH = each.value.root_path } : {}
+  )
 
   tags = local.app_tags
 

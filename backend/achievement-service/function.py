@@ -313,4 +313,4 @@ def _summary_to_response(summary: TeamSummary) -> TeamSummaryResponse:
     )
 
 
-handler = Mangum(app, lifespan="off")
+handler = Mangum(app, lifespan="off", api_gateway_base_path=os.getenv("ROOT_PATH", ""))

@@ -1,6 +1,6 @@
 ﻿#!/usr/bin/env bash
-# Script: Local Development Environment Startup
-# Purpose: Start both backend microservices and frontend dev server simultaneously
+# Script: Comprehensive Local Development Environment Startup
+# Purpose: Validate and start all components (MongoDB, LocalStack, Backend, Frontend)
 # Usage: ./start-dev.sh
 
 set -e
@@ -8,205 +8,461 @@ set -e
 # Usage helper
 if [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
     echo "Usage: $0"
-    echo "Start all backend microservices and the frontend dev server in parallel."
+    echo "Start comprehensive local development environment"
     echo ""
-    echo "Services started:"
-    echo "  Auth Service         : http://localhost:8001"
-    echo "  Employee Service     : http://localhost:8002"
-    echo "  Organization Service : http://localhost:8003"
-    echo "  Achievement Service  : http://localhost:8004"
-    echo "  Validation Service   : http://localhost:8005"
-    echo "  Frontend Dev Server  : http://localhost:3000"
+    echo "Description:"
+    echo "  Validates and starts all required services:"
+    echo "  1. PostgreSQL (with proper binding)"
+    echo "  2. MongoDB (with proper binding)"
+    echo "  3. LocalStack (AWS services emulation)"
+    echo "  4. Backend infrastructure (Terraform + Lambda)"
+    echo "  5. Frontend development server (React)"
     echo ""
     echo "Options:"
     echo "  -h, --help      Show this help message"
     echo ""
     echo "Requirements:"
-    echo "  - Python 3.11+ with pip and uvicorn"
-    echo "  - Node.js with npm"
-    echo "  - PostgreSQL running on localhost:5432"
+    echo "  - postgres installed"
+    echo "  - mongod installed"
+    echo "  - npm installed"
+    echo "  - localstack installed"
+    echo "  - tflocal installed"
     exit 0
 fi
 
-echo "============================================"
-echo "Team Management & Achievement Analytics"
-echo "Local Development Environment Startup"
-echo "============================================"
+echo "==================================================="
+echo "Comprehensive Local Development Environment Startup"
+echo "==================================================="
 echo ""
 
-# Resolve script directory and project root
+# Resolve script directory and project root paths
 SCRIPT_DIR="$(cd "$(dirname "$0")" > /dev/null 2>&1 || exit 1; pwd -P)"
-PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." > /dev/null 2>&1 || exit 1; pwd -P)"
-BACKEND_DIR="$PROJECT_ROOT/backend"
+PROJECT_ROOT="$(cd $SCRIPT_DIR/.. > /dev/null 2>&1 || exit 1; pwd -P)"
+
+# Define project directories
+INFRA_DIR="$PROJECT_ROOT/infra"
 FRONTEND_DIR="$PROJECT_ROOT/frontend"
 
-# Track all background PIDs for cleanup
-PIDS=()
-
-# Trap Ctrl+C and EXIT â€” kill all background processes
-cleanup() {
-    echo ""
-    echo "Shutting down all services..."
-    for pid in "${PIDS[@]}"; do
-        kill "$pid" 2>/dev/null || true
-    done
-    # Kill any lingering uvicorn processes started by this shell
-    pkill -P $$ 2>/dev/null || true
-    echo "All services stopped."
-    exit 0
-}
-trap cleanup SIGINT SIGTERM EXIT
-
 # ============================================================
-# CHECK PREREQUISITES
+# STEP 1: Check and Start PostgreSQL
 # ============================================================
-echo "[1/3] Checking prerequisites..."
+echo -e "[1/5] Checking PostgreSQL..."
 
-# Python / pip
-if ! command -v python3 &>/dev/null && ! command -v python &>/dev/null; then
-    echo "  ERROR: Python 3 is not installed."
+if ! command -v psql &> /dev/null; then
+    echo -e "ERROR: PostgreSQL (psql) is not installed"
+    echo "Install: brew install postgresql@16 (Mac) or sudo apt install postgresql (Linux)"
     exit 1
 fi
-PYTHON_CMD=$(command -v python3 || command -v python)
 
-if ! command -v pip3 &>/dev/null && ! command -v pip &>/dev/null; then
-    echo "  ERROR: pip is not installed."
-    exit 1
-fi
-PIP_CMD=$(command -v pip3 || command -v pip)
-
-# Node / npm
-if ! command -v npm &>/dev/null; then
-    echo "  ERROR: npm is not installed."
-    exit 1
-fi
-echo "  OK  Python : $($PYTHON_CMD --version)"
-echo "  OK  Node   : $(node --version)"
-echo "  OK  npm    : $(npm --version)"
-
-# PostgreSQL (warn only â€” services will fail gracefully if unavailable)
-if pg_isready -q 2>/dev/null; then
-    echo "  OK  PostgreSQL is ready"
+if pg_isready -q; then
+    echo -e "  ✓ PostgreSQL is running and connection verified"
 else
-    echo "  WARN: PostgreSQL does not appear to be running on localhost:5432."
-    echo "        Backend services may fail to connect."
+    echo -e "  ⚠ PostgreSQL not running, starting it..."
+    if [[ "$(uname)" == "Darwin" ]]; then
+        PG_SERVICE=$(brew services list 2>/dev/null | awk '/^postgresql/ {print $1}' | head -1)
+        if [ -z "$PG_SERVICE" ]; then
+            echo -e "  ✗ No PostgreSQL brew service found. Install: brew install postgresql@16"
+            exit 1
+        fi
+        PG_DATA_DIR="/opt/homebrew/var/${PG_SERVICE}"
+        if [ ! -d "$PG_DATA_DIR" ] || [ -z "$(ls -A "$PG_DATA_DIR" 2>/dev/null)" ]; then
+            echo -e "  ⚠ PostgreSQL data directory not found, initializing..."
+            initdb "$PG_DATA_DIR" || { echo -e "  ✗ Failed to initialize PostgreSQL data directory"; exit 1; }
+            echo -e "  ✓ PostgreSQL data directory initialized"
+        fi
+        brew services restart "$PG_SERVICE" || { echo -e "  ✗ Failed to start PostgreSQL"; exit 1; }
+    else
+        PG_SERVICE=$(systemctl list-units --type=service --all 2>/dev/null | awk '/postgresql/ {print $1}' | head -1)
+        if [ -z "$PG_SERVICE" ]; then
+            echo -e "  ✗ No PostgreSQL systemctl service found. Install: sudo apt install postgresql"
+            exit 1
+        fi
+        sudo systemctl start "$PG_SERVICE" 2>/dev/null || sudo systemctl restart "$PG_SERVICE" || {
+            echo -e "  ✗ Failed to start PostgreSQL"
+            exit 1
+        }
+    fi
+
+    # Wait for PostgreSQL to be ready
+    for i in {1..10}; do
+        if pg_isready -q; then
+            echo -e "  ✓ PostgreSQL started and connection verified"
+            break
+        fi
+        if [ "$i" -eq 10 ]; then
+            echo -e "  ✗ PostgreSQL failed to start within 10 seconds"
+            exit 1
+        fi
+        sleep 1
+    done
 fi
 
 echo ""
 
 # ============================================================
-# LOAD ENVIRONMENT VARIABLES FROM backend/.env
+# STEP 2: Check and Start MongoDB
 # ============================================================
-BACKEND_ENV="$PROJECT_ROOT/backend/.env"
-if [ ! -f "$BACKEND_ENV" ]; then
-    echo "  ERROR: backend/.env not found."
-    echo "  Copy backend/.env.sample to backend/.env and fill in values."
+echo -e "[2/5] Checking MongoDB..."
+
+# Check if mongod is installed
+if ! command -v mongod &> /dev/null; then
+    echo -e "ERROR: MongoDB (mongod) is not installed"
+    echo "Install: apt-get install mongodb (Linux) or brew tap mongodb/brew && brew install mongodb-community (Mac)"
     exit 1
 fi
-# shellcheck source=/dev/null
-set -a
-source "$BACKEND_ENV"
-set +a
-echo "  OK   Loaded environment from backend/.env"
-echo ""
 
-# ============================================================
-# START BACKEND SERVICES (parallel)
-# ============================================================
-echo "[2/3] Starting backend microservices..."
-echo ""
+# Check if MongoDB is running and properly bound
+MONGODB_OK=false
 
-LOG_DIR="/tmp/tms-dev-logs"
-mkdir -p "$LOG_DIR"
-
-start_service() {
-    local name="$1"
-    local port="$2"
-    local dir="$BACKEND_DIR/$name"
-
-    if [ ! -d "$dir" ]; then
-        echo "  SKIP $name â€” directory not found: $dir"
-        return
+if pgrep -x "mongod" > /dev/null; then
+    # MongoDB process exists, check binding
+    if command -v ss &> /dev/null; then
+        # Use ss (works without sudo on Linux)
+        if ss -ltn | grep -q '0.0.0.0:27017'; then
+            MONGODB_OK=true
+        fi
+    elif command -v netstat &> /dev/null && [[ "$(uname)" != "Darwin" ]]; then
+        # Fall back to netstat (Linux only - macOS netstat has different output format)
+        if netstat -ltn 2>/dev/null | grep -q '0.0.0.0:27017'; then
+            MONGODB_OK=true
+        fi
     fi
 
-    echo "  ...  Installing dependencies for $name"
-    cd "$dir"
-    $PIP_CMD install -q -r requirements.txt
-
-    # api-gateway uses main:app; all other services use function:app
-    local app_module="function:app"
-    if [ "$name" = "api-gateway" ]; then
-        app_module="main:app"
+    # On macOS or if above checks failed, check process arguments for bind_ip
+    if [ "$MONGODB_OK" = false ]; then
+        if ps -p $(pgrep -x "mongod") -o args= 2>/dev/null | grep -q "bind_ip 0.0.0.0\|bind_ip=0.0.0.0"; then
+            MONGODB_OK=true
+        fi
     fi
 
-    echo "  OK   Starting $name on port $port"
-    uvicorn $app_module \
-        --host 0.0.0.0 \
-        --port "$port" \
-        --reload \
-        --log-level warning \
-        > "$LOG_DIR/$name.log" 2>&1 &
-    PIDS+=($!)
-    cd "$PROJECT_ROOT"
-}
+    # Final fallback: try to connect directly
+    if [ "$MONGODB_OK" = false ]; then
+        if mongosh --quiet --eval "db.adminCommand({ping:1}).ok" > /dev/null 2>&1; then
+            MONGODB_OK=true
+        fi
+    fi
+fi
 
-start_service "auth-service"         "${AUTH_PORT}"
-start_service "employee-service"     "${EMPLOYEE_PORT}"
-start_service "organization-service" "${ORGANIZATION_PORT}"
-start_service "achievement-service"  "${ACHIEVEMENT_PORT}"
-start_service "validation-service"   "${VALIDATION_PORT}"
-start_service "api-gateway"          "${API_GATEWAY_PORT}"
+if [ "$MONGODB_OK" = true ]; then
+    echo -e "  ✓ MongoDB is running and bound to 0.0.0.0:27017"
 
-# ============================================================
-# WRITE FRONTEND .env.local (direct service URLs)
-# ============================================================
-ENV_FILE="$FRONTEND_DIR/.env.local"
-cat > "$ENV_FILE" <<EOF
-VITE_API_GATEWAY_URL=http://localhost:${API_GATEWAY_PORT}
-EOF
+    # Verify it's actually accessible
+    if ! mongosh --quiet --eval "db.adminCommand({ping:1}).ok" > /dev/null 2>&1; then
+        echo -e "  ✗ MongoDB is running but not responding to ping"
+        exit 1
+    fi
+    echo -e "  ✓ MongoDB connection verified"
+else
+    echo -e "  ⚠ MongoDB not running or not bound to 0.0.0.0, starting it..."
+
+    # Kill any existing mongod that's not properly configured
+    if pgrep -x "mongod" > /dev/null; then
+        echo -e "  ⚠ Stopping misconfigured MongoDB..."
+        PID=$(pgrep -x "mongod" || true)
+        if [ -n "$PID" ]; then
+            OWNER=$(ps -o user= -p "$PID" | tr -d ' ')
+            if [ "$OWNER" != "$(whoami)" ]; then
+                echo -e "    MongoDB is running as ${OWNER}, attempting sudo stop..."
+                if command -v systemctl &> /dev/null && systemctl list-units --type=service --all | grep -q mongod; then
+                    sudo systemctl stop mongod || true
+                else
+                    sudo kill "$PID" || true
+                fi
+            else
+                kill "$PID" || true
+            fi
+            sleep 2
+        fi
+    fi
+
+    # Determine data and log directories based on OS
+    if [[ "$OSTYPE" == "linux-gnu"* ]]; then
+        DATA_DIR="/var/lib/mongodb"
+        LOG_DIR="/var/log/mongodb"
+        # Try to create directories with sudo if needed
+        if [ ! -d "$DATA_DIR" ]; then
+            mkdir -p "$DATA_DIR" 2>/dev/null || sudo mkdir -p "$DATA_DIR"
+        fi
+        if [ ! -d "$LOG_DIR" ]; then
+            mkdir -p "$LOG_DIR" 2>/dev/null || sudo mkdir -p "$LOG_DIR"
+        fi
+        # Ensure current user owns the directories
+        sudo chown -R $(whoami):$(whoami) "$DATA_DIR" "$LOG_DIR" 2>/dev/null || true
+    else
+        # Mac
+        DATA_DIR="/usr/local/var/mongodb"
+        LOG_DIR="/usr/local/var/log/mongodb"
+        mkdir -p "$DATA_DIR" "$LOG_DIR"
+    fi
+
+    # Start MongoDB with correct binding
+    echo -e "  Starting MongoDB with --bind_ip 0.0.0.0..."
+    mongod --dbpath "$DATA_DIR" --bind_ip 0.0.0.0 --port 27017 --fork --logpath "$LOG_DIR/mongo.log"
+    sleep 3
+
+    # Verify it started correctly
+    if ! mongosh --quiet --eval "db.adminCommand({ping:1}).ok" > /dev/null 2>&1; then
+        echo -e "  ✗ MongoDB failed to start properly"
+        echo -e "  Log tail:"
+        tail -n 20 "$LOG_DIR/mongo.log" | sed 's/^/    /'
+        exit 1
+    fi
+
+    echo -e "  ✓ MongoDB started and verified"
+fi
+
 echo ""
-echo "  OK   Written $ENV_FILE"
 
 # ============================================================
-# START FRONTEND (in background so both stream together)
+# STEP 3: Check and Start LocalStack
 # ============================================================
-echo ""
-echo "[3/3] Starting frontend dev server..."
+echo -e "[3/5] Checking LocalStack..."
+
+# Check if localstack is installed
+if ! command -v localstack &> /dev/null; then
+    echo -e "ERROR: LocalStack is not installed"
+    echo "Install: pip install localstack"
+    exit 1
+fi
+
+# Check if Docker is running
+if ! docker info > /dev/null 2>&1; then
+    echo -e "ERROR: Docker is not running"
+    echo "  Please start Docker Desktop and try again"
+    exit 1
+fi
+echo -e "  ✓ Docker is running"
+
+# Check if LocalStack is running
+LOCALSTACK_OK=false
+LOCALSTACK_IMAGE="${LOCALSTACK_IMAGE:-localstack/localstack-pro}"
+if curl -s http://localhost:4566/_localstack/health > /dev/null 2>&1; then
+    # Verify the correct image is running
+    RUNNING_IMAGE=$(docker inspect localstack-main --format '{{.Config.Image}}' 2>/dev/null || echo "")
+    if [ "$RUNNING_IMAGE" != "$LOCALSTACK_IMAGE" ]; then
+        echo -e "  ⚠ LocalStack running with wrong image ($RUNNING_IMAGE), expected $LOCALSTACK_IMAGE. Restarting..."
+        localstack stop
+        docker stop localstack-main 2>/dev/null || true
+        sleep 5
+    else
+        LOCALSTACK_OK=true
+        echo -e "  ✓ LocalStack is running ($LOCALSTACK_IMAGE)"
+    fi
+fi
+
+if [ "$LOCALSTACK_OK" = false ]; then
+    # Check if LocalStack docker container is already running
+    if docker ps | grep -q localstack-main; then
+        echo -e "  ⚠ Stopping existing LocalStack container..."
+        localstack stop || echo "WARNING: localstack stop didn't work"
+        docker stop localstack-main || echo "WARNING: docker stop localstack-main didn't work"
+        sleep 10
+    fi
+
+    echo -e "  ⚠ LocalStack not running, starting it..."
+    localstack start -d
+
+    # Wait for LocalStack to be ready (up to 30 seconds)
+    for i in {1..30}; do
+        if curl -s http://localhost:4566/_localstack/health > /dev/null 2>&1; then
+            LOCALSTACK_OK=true
+            echo -e "  ✓ LocalStack started"
+            break
+        fi
+        echo -e "  Waiting for LocalStack... ($i/30)"
+        sleep 1
+    done
+
+    if [ "$LOCALSTACK_OK" = false ]; then
+        echo -e "  ✗ LocalStack failed to start within 30 seconds"
+        exit 1
+    fi
+fi
+
+# Verify LocalStack services
+HEALTH=$(curl -s http://localhost:4566/_localstack/health 2>/dev/null || echo "{}")
+LAMBDA_STATUS=$(echo "$HEALTH" | grep -o '"lambda":"[^"]*"' | cut -d'"' -f4 || echo "unknown")
+S3_STATUS=$(echo "$HEALTH" | grep -o '"s3":"[^"]*"' | cut -d'"' -f4 || echo "unknown")
+
+if [ "$LAMBDA_STATUS" != "available" ] && [ "$LAMBDA_STATUS" != "running" ]; then
+    echo -e "  ⚠ Lambda service status: $LAMBDA_STATUS"
+fi
+
+if [ "$S3_STATUS" != "available" ] && [ "$S3_STATUS" != "running" ]; then
+    echo -e "  ⚠ S3 service status: $S3_STATUS"
+fi
+
+echo -e "  ✓ LocalStack services verified"
 echo ""
 
+# ============================================================
+# STEP 4: Check and Deploy Backend
+# ============================================================
+echo -e "[4/5] Checking Backend Infrastructure..."
+
+# Verify required tools
+if ! command -v tflocal &> /dev/null; then
+    echo -e "ERROR: tflocal is not installed"
+    echo "Install: pip install terraform-local"
+    exit 1
+fi
+
+# Detect MongoDB host for LocalStack Lambda functions
+if [[ "$OSTYPE" == "linux-gnu"* ]]; then
+    export TF_VAR_mongodb_host="172.17.0.1"
+    export TF_VAR_aws_postgres_host="172.17.0.1"
+    echo -e "  Detected Linux - using host: 172.17.0.1"
+else
+    export TF_VAR_mongodb_host="host.docker.internal"
+    export TF_VAR_aws_postgres_host="host.docker.internal"
+    echo -e "  Detected Mac/Windows - using host: host.docker.internal"
+fi
+
+# Change to infrastructure directory
+cd "$INFRA_DIR"
+
+# Clean up old Lambda build artifacts to force fresh builds
+echo -e "  Cleaning up old Lambda build artifacts..."
+rm -rf "$INFRA_DIR/builds"
+
+# Check if backend is deployed
+BACKEND_OK=false
+if tflocal output lambda_urls > /dev/null 2>&1; then
+    # Backend is deployed, verify functions are accessible
+    LAMBDA_URLS=$(tflocal output -json lambda_urls 2>/dev/null | grep -o 'http://[^"]*' | head -1 || echo "")
+
+    if [ -n "$LAMBDA_URLS" ]; then
+        # Test if at least one function responds
+        if curl -s -f "$LAMBDA_URLS" > /dev/null 2>&1; then
+            BACKEND_OK=true
+            echo -e "  ✓ Backend is deployed and functions are responding"
+        else
+            echo -e "  ⚠ Backend is deployed but functions not responding"
+        fi
+    fi
+fi
+
+if [ "$BACKEND_OK" = false ]; then
+    echo -e "  ⚠ Backend not deployed or not working, deploying..."
+
+    # Deploy backend
+    $SCRIPT_DIR/deploy-backend.sh local > /tmp/backend-deploy.log 2>&1 || {
+        echo -e "  ✗ Backend deployment failed"
+        tail -n 50 /tmp/backend-deploy.log | sed 's/^/    /'
+        exit 1
+    }
+
+    echo -e "  ✓ Backend deployed successfully"
+fi
+
+# Display Lambda URLs
+echo -e "  Lambda Function URLs:"
+tflocal output -json lambda_urls 2>/dev/null | grep -o 'http://[^"]*' | sed 's/^/    /' || echo "    (none)"
+
+echo ""
+
+# ============================================================
+# STEP 5: Check and Start Frontend
+# ============================================================
+echo -e "[5/5] Checking Frontend..."
+
+# Check if npm is installed
+if ! command -v npm &> /dev/null; then
+    echo -e "ERROR: npm is not installed"
+    exit 1
+fi
+
+# Change to frontend directory
 cd "$FRONTEND_DIR"
 
+# Check if dependencies are installed
 if [ ! -d "node_modules" ]; then
-    echo "  ...  Installing frontend dependencies (first run)..."
-    npm install --silent
+    echo -e "  ⚠ Frontend dependencies not installed, installing..."
+    rm -f package-lock.json
+    npm install > /tmp/npm-install.log 2>&1 || {
+        echo -e "  ✗ npm install failed"
+        tail -n 30 /tmp/npm-install.log | sed 's/^/    /'
+        exit 1
+    }
+    echo -e "  ✓ Frontend dependencies installed"
+else
+    echo -e "  ✓ Frontend dependencies already installed"
 fi
 
-npm run dev > "$LOG_DIR/frontend.log" 2>&1 &
-FRONTEND_PID=$!
-PIDS+=($FRONTEND_PID)
+# Generate .env.local for frontend
+echo -e "  Generating frontend environment configuration..."
+"$SCRIPT_DIR/generate-env.sh" > /dev/null 2>&1 || {
+    echo -e "  ⚠ Could not generate .env.local"
+}
 
-# Give everything a moment to start
+# Restart proxy so it picks up the newly generated .env.local
+if [ -f /tmp/proxy-server.pid ]; then
+    kill "$(cat /tmp/proxy-server.pid)" || echo "WARNING: no process found"
+    rm -f /tmp/proxy-server.pid
+elif lsof -iTCP:3001 -sTCP:LISTEN > /dev/null 2>&1; then
+    lsof -ti:3001 | xargs kill 2>/dev/null
+fi
+
+echo -e "  Starting CORS proxy server..."
+nohup node "$SCRIPT_DIR/proxy-server.js" > /tmp/proxy-server.log 2>&1 &
+PROXY_PID=$!
+
+# Wait for proxy to start
 sleep 2
 
-# ============================================================
-# SUMMARY
-# ============================================================
-echo "============================================"
-echo "  All services are starting up!"
-echo "============================================"
+# Verify proxy started
+if kill -0 $PROXY_PID 2>/dev/null; then
+    echo -e "  ✓ Proxy server started (PID: $PROXY_PID)"
+    echo $PROXY_PID > /tmp/proxy-server.pid
+else
+    echo -e "  ✗ Proxy server failed to start"
+    cat /tmp/proxy-server.log | sed 's/^/    /'
+    exit 1
+fi
+
+# Check if React dev server is already running
+REACT_RUNNING=false
+if lsof -iTCP:3000 -sTCP:LISTEN > /dev/null 2>&1 || ss -ltn 2>/dev/null | grep -q ':3000'; then
+    REACT_RUNNING=true
+    echo -e "  ✓ React dev server is already running on port 3000"
+fi
+
 echo ""
-echo "  Auth Service         :  http://localhost:${AUTH_PORT}/docs"
-echo "  Employee Service     :  http://localhost:${EMPLOYEE_PORT}/docs"
-echo "  Organization Service :  http://localhost:${ORGANIZATION_PORT}/docs"
-echo "  Achievement Service  :  http://localhost:${ACHIEVEMENT_PORT}/docs"
-echo "  Validation Service   :  http://localhost:${VALIDATION_PORT}/docs"
-echo "  API Gateway          :  http://localhost:${API_GATEWAY_PORT}/docs"
-echo "  Frontend             :  http://localhost:3000"
+echo "============================================================"
+echo -e "  ✓ All Components Verified!"
+echo "============================================================"
 echo ""
-echo "  Logs in: $LOG_DIR/"
-echo ""
-echo "  Press Ctrl+C to stop all services."
+echo "Services Status:"
+echo "  • MongoDB:    Running on 0.0.0.0:27017"
+echo "  • PostgreSQL: Running on localhost:5432"
+echo "  • LocalStack: Running on localhost:4566"
+echo "  • Backend:    Deployed to LocalStack"
+echo "  • Proxy:      Running on localhost:3001"
+if [ "$REACT_RUNNING" = true ]; then
+    echo "  • Frontend:   Already running on localhost:3000"
+else
+    echo "  • Frontend:   Ready to start"
+fi
 echo ""
 
-# Wait for all background jobs; exit when any of them exit
-wait
+if [ "$REACT_RUNNING" = true ]; then
+    echo "All services are running!"
+    echo "  Frontend: http://localhost:3000"
+    echo "  Backend:  http://localhost:3001"
+else
+    echo "Starting React development server..."
+    echo "  Frontend: http://localhost:3000"
+    echo "  Backend:  http://localhost:3001"
+    echo ""
+    echo "Press Ctrl+C to stop"
+    echo ""
+
+    # Cleanup: Kill proxy server when script exits
+    if [ -f /tmp/proxy-server.pid ]; then
+        PROXY_PID=$(cat /tmp/proxy-server.pid)
+        trap "kill $PROXY_PID 2>/dev/null; rm -f /tmp/proxy-server.pid" EXIT
+    fi
+
+    # Start React development server
+    npm run dev
+fi
